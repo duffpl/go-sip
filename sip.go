@@ -4,12 +4,12 @@ import (
 	"crypto"
 	"crypto/hmac"
 	"crypto/sha256"
-	"github.com/duffpl/go-sip/kvs"
 	"encoding/json"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/duffpl/go-sip/kvs"
 	"github.com/h2non/bimg"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
@@ -117,7 +117,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	app.Version = "0.0.1";
+	app.Version = "0.0.2";
 	app.Commands = []cli.Command{
 		{
 			Name: "serve",
