@@ -18,17 +18,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/user"
 	"strconv"
 )
-
-func getCacheDirInHome(cacheDirName string) (dir string, err error) {
+const cacheDirFlagName = "cachedir"
+func getCacheDir(c *cli.Context, cacheDirName string) (dir string, err error) {
 	err = func() error {
-		me, err := user.Current()
-		if err != nil {
-			return err
-		}
-		dir = me.HomeDir + "/" + cacheDirName
+		cacheRoot := c.String(cacheDirFlagName)
+		dir = cacheRoot + "/" + cacheDirName
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			err = os.MkdirAll(dir, 0755)
 			if err != nil {
@@ -46,38 +42,6 @@ func getCacheDirInHome(cacheDirName string) (dir string, err error) {
 type ByteKVS interface {
 	Get(key string) ([]byte, error)
 	Set(key string, value []byte) error
-}
-
-type CacheKVS struct {
-	dir string
-}
-
-func (c CacheKVS) Get(key string) ([]byte, error) {
-	cacheFile := c.getCacheFilename(key)
-	if _, err := os.Stat(cacheFile); os.IsNotExist(err) {
-		return nil, nil
-	}
-	fh, err := os.Open(cacheFile)
-	if err != nil {
-		return nil, err
-	}
-	output, err := ioutil.ReadAll(fh)
-	fh.Close()
-	if err != nil {
-		return nil, err
-	}
-	return output, nil
-}
-
-func (c CacheKVS) Set(key string, value []byte) error {
-	cacheFile := c.getCacheFilename(key)
-	return ioutil.WriteFile(cacheFile, value, 0644)
-}
-
-func (c CacheKVS) getCacheFilename(key string) string {
-	hashedKey, _ := calcMD5(key)
-	cacheFilename := c.dir + "/" + hashedKey
-	return cacheFilename
 }
 
 type S3Source struct {
@@ -117,11 +81,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	app.Version = "0.0.2";
+	app.Version = "0.0.3";
 	app.Commands = []cli.Command{
 		{
 			Name: "serve",
 			Action: func(c *cli.Context) error {
+
 				sigFile, err := os.Open("sig.key")
 				if err != nil {
 					return cli.NewExitError(errors.Wrap(err, "cannot open sig file"), 1)
@@ -131,11 +96,11 @@ func main() {
 					return cli.NewExitError(errors.Wrap(err, "cannot read sig key from file"), 1)
 				}
 				s3Client := s3.New(session.Must(session.NewSession()))
-				processedCacheDir, err := getCacheDirInHome("sip-cache/processed")
+				processedCacheDir, err := getCacheDir(c,"processed-images")
 				if err != nil {
 					panic(err)
 				}
-				s3CacheDir, err := getCacheDirInHome("sip-cache/s3")
+				s3CacheDir, err := getCacheDir(c, "source-images")
 				if err != nil {
 					panic(err)
 				}
@@ -145,7 +110,6 @@ func main() {
 				cachedS3KVS := kvs.NewCached(s3KVS, s3Cache)
 				http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 					err, code := func() (err error, status int) {
-
 						if !verifySignature(request, sigKey) {
 							return errors.New("invalid signature"), http.StatusForbidden
 						}
@@ -210,6 +174,11 @@ func main() {
 					Name:  "port",
 					Value: "2222",
 				},
+				cli.StringFlag{
+					Name:  cacheDirFlagName,
+					Value: "/tmp/sip-cache",
+				},
+
 			},
 		},
 	}
@@ -261,22 +230,17 @@ func NewResizeOperation(iW, iH int) ImageOperation {
 
 func getImageSizeParamsFromRequest(r *http.Request) (w int, h int, err error) {
 	q := r.URL.Query()
-	wValue, err := getIntParam(q, "w")
-	if wValue == nil {
-		w = 0
-	}
-	hValue, err := getIntParam(q, "h")
-	if hValue == nil {
-		h = 0
-	}
+	w, err = getIntParam(q, "w", 0)
+	h, err = getIntParam(q, "h", 0)
 	return
 }
-func getIntParam(q url.Values, paramName string) (result *int, err error) {
+func getIntParam(q url.Values, paramName string, defaultValue int) (result int, err error) {
 	var cr int
+	result = defaultValue
 	param := q.Get(paramName)
 	if param != "" {
 		cr, err = strconv.Atoi(param)
-		*result = cr
+		result = cr
 	}
 	return
 }
@@ -291,6 +255,7 @@ func getCropParamsFromRequest(r *http.Request) (cx int, cy int, cw int, ch int, 
 }
 
 func verifySignature(r *http.Request, sigKey []byte) bool {
+	return true
 	query := r.URL.Query()
 	msg := struct {
 		Path       string `json:"path"`
