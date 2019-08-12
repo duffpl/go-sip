@@ -4,7 +4,7 @@ import (
 	"crypto"
 	"crypto/hmac"
 	"crypto/sha256"
-	"duffpl/go-simple-image-server/kvs"
+	"github.com/duffpl/go-sip/kvs"
 	"encoding/json"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
