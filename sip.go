@@ -6,10 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/duffpl/go-sip/kvs"
+	"github.com/duffpl/go-sip/matcher"
+	_ "github.com/duffpl/go-sip/sources/s3"
 	"github.com/h2non/bimg"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
@@ -20,7 +19,9 @@ import (
 	"os"
 	"strconv"
 )
+
 const cacheDirFlagName = "cachedir"
+
 func getCacheDir(c *cli.Context, cacheDirName string) (dir string, err error) {
 	err = func() error {
 		cacheRoot := c.String(cacheDirFlagName)
@@ -39,39 +40,21 @@ func getCacheDir(c *cli.Context, cacheDirName string) (dir string, err error) {
 	return
 }
 
-type ByteKVS interface {
-	Get(key string) ([]byte, error)
-	Set(key string, value []byte) error
-}
-
-type S3Source struct {
-	client *s3.S3
-	cache  ByteKVS
-}
-
-func (s *S3Source) fetchKey(key string) (data []byte, cacheHit bool, err error) {
-	data, err = s.cache.Get(key)
+func GetMatchersFromConfig(configFilename string) (matchers []matcher.Matcher, err error) {
+	data, _ := ioutil.ReadFile(configFilename)
+	var matcherConfigs []matcher.MatcherConfig
+	err = json.Unmarshal(data, &matcherConfigs)
 	if err != nil {
-		return
+		return nil, errors.Wrap(err, "matchers config loader")
 	}
-	if data != nil {
-		cacheHit = true
-		return
+	for _, matcherConfig := range matcherConfigs {
+		newMatcher, err := matcher.NewMatcher(matcherConfig)
+		matchers = append(matchers, newMatcher)
+		if err != nil {
+			return nil, errors.Wrap(err, "creating matcher")
+		}
 	}
-	s3Response, err := s.client.GetObject(&s3.GetObjectInput{
-		Bucket: aws.String(os.Getenv("AWS_BUCKET")),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return
-	}
-	data, err = ioutil.ReadAll(s3Response.Body)
-	if err != nil {
-		return
-	}
-	err = s.cache.Set(key, data)
 	return
-
 }
 
 func main() {
@@ -81,7 +64,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	app.Version = "0.0.3";
+	app.Version = "0.0.3"
 	app.Commands = []cli.Command{
 		{
 			Name: "serve",
@@ -95,35 +78,48 @@ func main() {
 				if err != nil {
 					return cli.NewExitError(errors.Wrap(err, "cannot read sig key from file"), 1)
 				}
-				s3Client := s3.New(session.Must(session.NewSession()))
-				processedCacheDir, err := getCacheDir(c,"processed-images")
+				processedCacheDir, err := getCacheDir(c, "processed-images")
 				if err != nil {
 					panic(err)
 				}
-				s3CacheDir, err := getCacheDir(c, "source-images")
+				sourceCacheDir, err := getCacheDir(c, "source-images")
 				if err != nil {
 					panic(err)
 				}
-				s3Cache := kvs.NewFileKVS(s3CacheDir)
+				matchers, err := GetMatchersFromConfig("sources.json")
+				sourceCache := kvs.NewFileKVS(sourceCacheDir)
 				processedCache := kvs.NewFileKVS(processedCacheDir)
-				s3KVS := kvs.NewS3(s3Client)
-				cachedS3KVS := kvs.NewCached(s3KVS, s3Cache)
 				http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 					err, code := func() (err error, status int) {
+						var sourceMatcher matcher.Matcher
+						for _, currentMatcher := range matchers {
+							if currentMatcher.HasMatched(request) {
+								sourceMatcher = currentMatcher
+								break
+							}
+						}
+						if sourceMatcher == nil {
+							return errors.New("No source matched for current request"), http.StatusBadRequest
+						}
+						rewrittenPath, err := sourceMatcher.RewritePath(request)
+						if err != nil {
+							return errors.Wrap(err, "path rewrite"), http.StatusBadRequest
+						}
+
 						if !verifySignature(request, sigKey) {
 							return errors.New("invalid signature"), http.StatusForbidden
 						}
-						s3Key := request.URL.Path[1:]
 						iW, iH, err := getImageSizeParamsFromRequest(request)
 						if err != nil {
 							return errors.Wrap(err, "invalid image params"), http.StatusPreconditionFailed
 						}
 						cX, cY, cW, cH, cropErr := getCropParamsFromRequest(request)
 						var resizedKey string
+						sourceItemKey := sourceMatcher.GetSource().GetResourceId(rewrittenPath)
 						if cropErr == nil {
-							resizedKey = fmt.Sprintf("%s-%d-%d-%d-%d-%d-%d", s3Key, iW, iH, cX, cY, cW, cH)
+							resizedKey = fmt.Sprintf("%s-%d-%d-%d-%d-%d-%d", sourceItemKey, iW, iH, cX, cY, cW, cH)
 						} else {
-							resizedKey = fmt.Sprintf("%s-%d-%d", s3Key, iW, iH)
+							resizedKey = fmt.Sprintf("%s-%d-%d", sourceItemKey, iW, iH)
 						}
 						data, err := processedCache.Get(resizedKey)
 						if err != nil {
@@ -133,11 +129,21 @@ func main() {
 							writeImage(writer, data)
 							return nil, 200
 						}
-						imageData, err := cachedS3KVS.Get(s3Key)
+						sourceData, err := sourceCache.Get(sourceItemKey)
 						if err != nil {
-							return err, 500
+							return errors.Wrap(err, "fetch data from source cache"), http.StatusBadRequest
 						}
-						img := bimg.NewImage(imageData)
+						if sourceData == nil {
+							sourceData, err = sourceMatcher.GetSource().GetData(rewrittenPath)
+							if err != nil {
+								return errors.Wrap(err, "fetch data from source"), http.StatusBadRequest
+							}
+							err = sourceCache.Set(sourceItemKey, sourceData)
+							if err != nil {
+								return errors.Wrap(err, "set data in source cache"), http.StatusBadRequest
+							}
+						}
+						img := bimg.NewImage(sourceData)
 						if cropErr == nil {
 							extractedImg, err := img.Extract(cY, cX, cW, cH)
 							if err != nil {
@@ -145,7 +151,7 @@ func main() {
 							}
 							img = bimg.NewImage(extractedImg)
 						}
-						imageData, err = img.Process(bimg.Options{
+						imageData, err := img.Process(bimg.Options{
 							Type:    bimg.JPEG,
 							Quality: 60,
 							Width:   iW,
@@ -163,10 +169,12 @@ func main() {
 					}
 				})
 				port := c.String("port")
+				fmt.Printf("Image server will listen on port '%s'", port)
 				e := http.ListenAndServe(":"+port, nil)
 				if e != nil {
 					panic(e)
 				}
+
 				return nil
 			},
 			Flags: []cli.Flag{
@@ -178,7 +186,6 @@ func main() {
 					Name:  cacheDirFlagName,
 					Value: "/tmp/sip-cache",
 				},
-
 			},
 		},
 	}

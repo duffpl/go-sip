@@ -1,0 +1,35 @@
+[
+  {
+    "hostMatch": "^legacy",
+    "pathMatch": "products/(.*)",
+    "rewritePattern": "img/products/$1",
+    "source": {
+      "type": "s3",
+      "config": {
+        "bucket": "mesmetric"
+      }
+    }
+  },
+  {
+    "hostMatch": "^localhost",
+    "pathMatch": "new-products/.*?([0-9a-f]{32})\\.(jpe?g|png)$",
+    "rewritePattern": "products/$1.$2",
+    "source": {
+      "type": "s3",
+      "config": {
+        "bucket": "mesmetric-v2"
+      }
+    }
+  },
+  {
+    "hostMatch": "^localhost",
+    "pathMatch": "img\\/products.*?(\\d.*?\\.jpg)$",
+    "rewritePattern": "img/products/$1",
+    "source": {
+      "type": "s3",
+      "config": {
+        "bucket": "mesmetric"
+      }
+    }
+  }
+]
