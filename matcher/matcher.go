@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type MatcherConfig struct {
@@ -24,6 +25,8 @@ type Matcher interface {
 	GetSource() sources.DataSource
 	RewritePath	(request *http.Request) (string, error)
 }
+
+var pathMatchMutex = &sync.RWMutex{}
 
 type RequestMatcher struct {
 	dataSource     sources.DataSource
@@ -41,10 +44,13 @@ func (m *RequestMatcher) RewritePath(request *http.Request) (string, error) {
 	if m.rewritePattern == "" {
 		return path, nil
 	}
+	pathMatchMutex.RLock()
 	if m.pathMatches[path] == nil {
+		pathMatchMutex.RUnlock()
 		return "", errors.New("no matches in path")
 	}
 	pathMatches := m.pathMatches[path]
+	pathMatchMutex.RUnlock()
 	rewriteMapMatches := rewriteMapRegexp.FindAllStringSubmatch(m.rewritePattern, -1)
 	if rewriteMapMatches == nil {
 		return path, nil
@@ -67,8 +73,11 @@ func (m *RequestMatcher) HasMatched(request *http.Request) (hasMatched bool) {
 	if m.pathRegexp == nil {
 		return true
 	}
-	pathMatches := m.pathRegexp.FindStringSubmatch(request.URL.Path)
-	m.pathMatches[request.URL.Path] = pathMatches
+	path := request.URL.Path
+	pathMatches := m.pathRegexp.FindStringSubmatch(path)
+	pathMatchMutex.Lock()
+	m.pathMatches[path] = pathMatches
+	pathMatchMutex.Unlock()
 	return pathMatches != nil
 }
 

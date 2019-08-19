@@ -12,7 +12,7 @@
   },
   {
     "hostMatch": "^localhost",
-    "pathMatch": "new-products/.*?([0-9a-f]{32})\\.(jpe?g|png)$",
+    "pathMatch": "v2/products/.*?([0-9a-f]{32})\\.(jpe?g|png)$",
     "rewritePattern": "products/$1.$2",
     "source": {
       "type": "s3",
@@ -23,7 +23,17 @@
   },
   {
     "hostMatch": "^localhost",
-    "pathMatch": "img\\/products.*?(\\d.*?\\.jpg)$",
+    "pathMatch": "^img",
+    "source": {
+      "type": "s3",
+      "config": {
+        "bucket": "mesmetric"
+      }
+    }
+  },
+  {
+    "hostMatch": "^localhost",
+    "pathMatch": "v1/products/(.*)$",
     "rewritePattern": "img/products/$1",
     "source": {
       "type": "s3",

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"github.com/duffpl/go-sip/kvs"
 	"github.com/duffpl/go-sip/matcher"
+	"github.com/duffpl/go-sip/sources"
+	"github.com/duffpl/go-sip/sources/cached"
 	_ "github.com/duffpl/go-sip/sources/s3"
 	"github.com/h2non/bimg"
 	"github.com/joho/godotenv"
@@ -18,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
 )
 
 const cacheDirFlagName = "cachedir"
@@ -56,8 +59,8 @@ func GetMatchersFromConfig(configFilename string) (matchers []matcher.Matcher, e
 	}
 	return
 }
-
 func main() {
+
 	app := cli.NewApp()
 	err := godotenv.Load()
 
@@ -69,7 +72,8 @@ func main() {
 		{
 			Name: "serve",
 			Action: func(c *cli.Context) error {
-
+				cachedSources := make(map[sources.DataSource]sources.DataSource)
+				cachedSourcesMapMutex := &sync.RWMutex{}
 				sigFile, err := os.Open("sig.key")
 				if err != nil {
 					return cli.NewExitError(errors.Wrap(err, "cannot open sig file"), 1)
@@ -87,7 +91,6 @@ func main() {
 					panic(err)
 				}
 				matchers, err := GetMatchersFromConfig("sources.json")
-				sourceCache := kvs.NewFileKVS(sourceCacheDir)
 				processedCache := kvs.NewFileKVS(processedCacheDir)
 				http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 					err, code := func() (err error, status int) {
@@ -105,7 +108,6 @@ func main() {
 						if err != nil {
 							return errors.Wrap(err, "path rewrite"), http.StatusBadRequest
 						}
-
 						if !verifySignature(request, sigKey) {
 							return errors.New("invalid signature"), http.StatusForbidden
 						}
@@ -115,7 +117,19 @@ func main() {
 						}
 						cX, cY, cW, cH, cropErr := getCropParamsFromRequest(request)
 						var resizedKey string
-						sourceItemKey := sourceMatcher.GetSource().GetResourceId(rewrittenPath)
+						dataSource := sourceMatcher.GetSource()
+						cachedSourcesMapMutex.RLock()
+						if cachedDataSource, found := cachedSources[dataSource]; !found {
+							cachedSourcesMapMutex.RUnlock()
+							cachedDataSource = cached.NewCachedDataSource(sourceCacheDir, dataSource)
+							cachedSourcesMapMutex.Lock()
+							cachedSources[dataSource] = cachedDataSource
+							cachedSourcesMapMutex.Unlock()
+							dataSource = cachedDataSource
+						} else {
+							dataSource = cachedDataSource
+						}
+						sourceItemKey := dataSource.GetResourceId(rewrittenPath)
 						if cropErr == nil {
 							resizedKey = fmt.Sprintf("%s-%d-%d-%d-%d-%d-%d", sourceItemKey, iW, iH, cX, cY, cW, cH)
 						} else {
@@ -129,19 +143,9 @@ func main() {
 							writeImage(writer, data)
 							return nil, 200
 						}
-						sourceData, err := sourceCache.Get(sourceItemKey)
+						sourceData, err := dataSource.GetData(rewrittenPath)
 						if err != nil {
 							return errors.Wrap(err, "fetch data from source cache"), http.StatusBadRequest
-						}
-						if sourceData == nil {
-							sourceData, err = sourceMatcher.GetSource().GetData(rewrittenPath)
-							if err != nil {
-								return errors.Wrap(err, "fetch data from source"), http.StatusBadRequest
-							}
-							err = sourceCache.Set(sourceItemKey, sourceData)
-							if err != nil {
-								return errors.Wrap(err, "set data in source cache"), http.StatusBadRequest
-							}
 						}
 						img := bimg.NewImage(sourceData)
 						if cropErr == nil {
@@ -184,7 +188,7 @@ func main() {
 				},
 				cli.StringFlag{
 					Name:  cacheDirFlagName,
-					Value: "/tmp/sip-cache",
+					Value: "/tmp/sip-cache-v2",
 				},
 			},
 		},
