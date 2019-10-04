@@ -67,7 +67,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	app.Version = "0.0.4"
+	app.Version = "0.0.5"
 	app.Commands = []cli.Command{
 		{
 			Name: "serve",
@@ -167,6 +167,9 @@ func main() {
 							return errors.Wrap(err, "cannot process image"), 500
 						}
 						_ = writeImage(writer, imageData)
+						if request.URL.Query().Get("temporary") == "1" {
+							return nil, 200
+						}
 						return processedCache.Set(resizedKey, imageData), 500
 					}()
 					if err != nil {
