@@ -120,13 +120,14 @@ func main() {
 						dataSource := sourceMatcher.GetSource()
 						cachedSourcesMapMutex.RLock()
 						if cachedDataSource, found := cachedSources[dataSource]; !found {
-							cachedSourcesMapMutex.RUnlock()
 							cachedDataSource = cached.NewCachedDataSource(sourceCacheDir, dataSource)
+							cachedSourcesMapMutex.RUnlock()
 							cachedSourcesMapMutex.Lock()
 							cachedSources[dataSource] = cachedDataSource
 							cachedSourcesMapMutex.Unlock()
 							dataSource = cachedDataSource
 						} else {
+							cachedSourcesMapMutex.RUnlock()
 							dataSource = cachedDataSource
 						}
 						sourceItemKey := dataSource.GetResourceId(rewrittenPath)
