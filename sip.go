@@ -140,7 +140,7 @@ func main() {
 							return err, 500
 						}
 						if data != nil {
-							writeImage(writer, data)
+							_ = writeImage(writer, data)
 							return nil, 200
 						}
 						sourceData, err := dataSource.GetData(rewrittenPath)
@@ -165,7 +165,7 @@ func main() {
 						if err != nil {
 							return errors.Wrap(err, "cannot process image"), 500
 						}
-						writeImage(writer, imageData)
+						_ = writeImage(writer, imageData)
 						return processedCache.Set(resizedKey, imageData), 500
 					}()
 					if err != nil {
@@ -197,9 +197,11 @@ func main() {
 
 }
 func writeImage(writer http.ResponseWriter, imageData []byte) error {
-	writer.Header()["Content-Length"] = []string{strconv.Itoa(len(imageData))}
-	writer.Header().Add("Cache-Control", "max-age=31536000, public")
-	writer.Header().Add("Content-Type", "image/jpeg")
+	header := writer.Header()
+	header["Content-Length"] = []string{strconv.Itoa(len(imageData))}
+	header.Add("Cache-Control", "max-age=31536000, public")
+	header.Add("Content-Type", "image/jpeg")
+	header.Add("Access-Control-Allow-Origin", "*")
 	_, err := writer.Write(imageData)
 	return err
 }
