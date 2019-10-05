@@ -146,6 +146,7 @@ func main() {
 						} else {
 							resizedKey = fmt.Sprintf("%s-%d-%d", sourceItemKey, iW, iH)
 						}
+						resizedKey += strconv.Itoa(defaultImageQuality)
 						data, err := processedCache.Get(resizedKey)
 						if err != nil {
 							return err, 500
