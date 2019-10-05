@@ -146,7 +146,11 @@ func main() {
 						} else {
 							resizedKey = fmt.Sprintf("%s-%d-%d", sourceItemKey, iW, iH)
 						}
-						resizedKey += strconv.Itoa(defaultImageQuality)
+						imageQuality, _ := strconv.Atoi(request.URL.Query().Get("q"))
+						if imageQuality == 0 {
+							imageQuality = defaultImageQuality
+						}
+						resizedKey += strconv.Itoa(imageQuality)
 						data, err := processedCache.Get(resizedKey)
 						if err != nil {
 							return err, 500
@@ -169,7 +173,7 @@ func main() {
 						}
 						imageData, err := img.Process(bimg.Options{
 							Type:    bimg.JPEG,
-							Quality: defaultImageQuality,
+							Quality: imageQuality,
 							Width:   iW,
 							Height:  iH,
 							Enlarge: false,
