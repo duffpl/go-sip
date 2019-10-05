@@ -24,6 +24,9 @@ import (
 )
 
 const cacheDirFlagName = "cachedir"
+const disableVipsCacheFlagName = "disableVipsCache"
+const enableSignedRequestsFlagName = "enableSignedRequests"
+const defaultImageQualityFlagName = "defaultImageQuality"
 
 func getCacheDir(c *cli.Context, cacheDirName string) (dir string, err error) {
 	err = func() error {
@@ -72,8 +75,6 @@ func main() {
 		{
 			Name: "serve",
 			Action: func(c *cli.Context) error {
-				bimg.VipsCacheSetMax(0)
-				bimg.VipsCacheSetMaxMem(0)
 				cachedSources := make(map[sources.DataSource]sources.DataSource)
 				cachedSourcesMapMutex := &sync.RWMutex{}
 				sigFile, err := os.Open("sig.key")
@@ -92,6 +93,13 @@ func main() {
 				if err != nil {
 					panic(err)
 				}
+				disableVipsCache := c.Bool(disableVipsCacheFlagName)
+				if disableVipsCache {
+					bimg.VipsCacheSetMax(0)
+					bimg.VipsCacheSetMaxMem(0)
+				}
+				signedRequestsEnabled := c.Bool(enableSignedRequestsFlagName)
+				defaultImageQuality := c.Int(defaultImageQualityFlagName)
 				matchers, err := GetMatchersFromConfig("sources.json")
 				processedCache := kvs.NewFileKVS(processedCacheDir)
 				http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
@@ -110,7 +118,7 @@ func main() {
 						if err != nil {
 							return errors.Wrap(err, "path rewrite"), http.StatusBadRequest
 						}
-						if !verifySignature(request, sigKey) {
+						if signedRequestsEnabled && !verifySignature(request, sigKey) {
 							return errors.New("invalid signature"), http.StatusForbidden
 						}
 						iW, iH, err := getImageSizeParamsFromRequest(request)
@@ -160,7 +168,7 @@ func main() {
 						}
 						imageData, err := img.Process(bimg.Options{
 							Type:    bimg.JPEG,
-							Quality: 60,
+							Quality: defaultImageQuality,
 							Width:   iW,
 							Height:  iH,
 							Enlarge: false,
@@ -195,6 +203,16 @@ func main() {
 				cli.StringFlag{
 					Name:  cacheDirFlagName,
 					Value: "/tmp/sip-cache-v2",
+				},
+				cli.BoolFlag{
+					Name: disableVipsCacheFlagName,
+				},
+				cli.BoolFlag{
+					Name: enableSignedRequestsFlagName,
+				},
+				cli.IntFlag{
+					Name:  defaultImageQualityFlagName,
+					Value: 60,
 				},
 			},
 		},
@@ -274,7 +292,6 @@ func getCropParamsFromRequest(r *http.Request) (cx int, cy int, cw int, ch int, 
 }
 
 func verifySignature(r *http.Request, sigKey []byte) bool {
-	return true
 	query := r.URL.Query()
 	msg := struct {
 		Path       string `json:"path"`
