@@ -72,6 +72,8 @@ func main() {
 		{
 			Name: "serve",
 			Action: func(c *cli.Context) error {
+				bimg.VipsCacheSetMax(0)
+				bimg.VipsCacheSetMaxMem(0)
 				cachedSources := make(map[sources.DataSource]sources.DataSource)
 				cachedSourcesMapMutex := &sync.RWMutex{}
 				sigFile, err := os.Open("sig.key")
