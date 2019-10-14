@@ -177,6 +177,11 @@ func main() {
 							Width:   iW,
 							Height:  iH,
 							Enlarge: false,
+							Background: bimg.Color{
+								R: 255,
+								G: 255,
+								B: 255,
+							},
 						})
 						if err != nil {
 							return errors.Wrap(err, "cannot process image"), 500
