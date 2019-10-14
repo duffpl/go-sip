@@ -70,7 +70,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	app.Version = "0.0.5"
+	app.Version = "0.0.6"
 	app.Commands = []cli.Command{
 		{
 			Name: "serve",
