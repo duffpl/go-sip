@@ -171,12 +171,10 @@ func main() {
 							}
 							img = bimg.NewImage(extractedImg)
 						}
-						imageData, err := img.Process(bimg.Options{
+						resizedImg, _ := img.Resize(iW, iH)
+						imageData, err := bimg.NewImage(resizedImg).Process(bimg.Options{
 							Type:    bimg.JPEG,
 							Quality: imageQuality,
-							Width:   iW,
-							Height:  iH,
-							Enlarge: false,
 							Background: bimg.Color{
 								R: 255,
 								G: 255,
