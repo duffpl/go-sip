@@ -11,7 +11,6 @@ import (
 	_ "net/http/pprof"
 )
 import (
-	"crypto"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
@@ -219,9 +218,6 @@ func main() {
 						if requestHasBeenCanceled {
 							return nil, 200
 						}
-						if err != nil {
-							return errors.Wrap(err, "cannot process image"), 500
-						}
 						outputData := &bytes.Buffer{}
 						outputWriter := bufio.NewWriter(outputData)
 						err = jpeg.Encode(outputWriter, img, &jpeg.Options{Quality: imageQuality})
@@ -290,14 +286,14 @@ func writeImage(writer http.ResponseWriter, imageData []byte) error {
 	return err
 }
 
-func calcMD5(input string) (checksum string, err error) {
-	hasher := crypto.MD5.New()
-	if _, err = hasher.Write([]byte(input)); err != nil {
-		err = errors.Wrap(err, "md5 checksum")
-	}
-	checksum = fmt.Sprintf("%x", hasher.Sum(nil))
-	return
-}
+//func calcMD5(input string) (checksum string, err error) {
+//	hasher := crypto.MD5.New()
+//	if _, err = hasher.Write([]byte(input)); err != nil {
+//		err = errors.Wrap(err, "md5 checksum")
+//	}
+//	checksum = fmt.Sprintf("%x", hasher.Sum(nil))
+//	return
+//}
 
 //func NewCropOperation(cX, cY, cW, cH int) ImageOperation {
 //	return func(image *bimg.Image) (*bimg.Image, error) {
