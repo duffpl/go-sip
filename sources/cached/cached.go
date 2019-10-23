@@ -7,9 +7,11 @@ import (
 	"github.com/pkg/errors"
 	"io/ioutil"
 	"os"
+	"sync"
 )
 
 type cachedDataSource struct {
+	readLock         sync.Mutex
 	originDataSource sources.DataSource
 	cacheDir         string
 }
@@ -63,7 +65,9 @@ func (c *cachedDataSource) readDataFromFile(key string) (output []byte, err erro
 			err = errors.Wrap(err, fmt.Sprintf("unable to close cache file '%s'", cacheFilename))
 		}
 	}()
+	c.readLock.Lock()
 	output, err = ioutil.ReadAll(fh)
+	c.readLock.Unlock()
 	return
 }
 

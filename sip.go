@@ -1,6 +1,16 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"github.com/anthonynsimon/bild/transform"
+	"image"
+	"image/jpeg"
+	"log"
+	"math"
+	_ "net/http/pprof"
+)
+import (
 	"crypto"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -11,10 +21,11 @@ import (
 	"github.com/duffpl/go-sip/sources"
 	"github.com/duffpl/go-sip/sources/cached"
 	_ "github.com/duffpl/go-sip/sources/s3"
-	"github.com/h2non/bimg"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
+	_ "image/jpeg"
+	_ "image/png"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -76,7 +87,6 @@ func main() {
 			Name: "serve",
 			Action: func(c *cli.Context) error {
 				cachedSources := make(map[sources.DataSource]sources.DataSource)
-				cachedSourcesMapMutex := &sync.RWMutex{}
 				sigFile, err := os.Open("sig.key")
 				if err != nil {
 					return cli.NewExitError(errors.Wrap(err, "cannot open sig file"), 1)
@@ -93,17 +103,27 @@ func main() {
 				if err != nil {
 					panic(err)
 				}
-				disableVipsCache := c.Bool(disableVipsCacheFlagName)
-				if disableVipsCache {
-					bimg.VipsCacheSetMax(0)
-					bimg.VipsCacheSetMaxMem(0)
-				}
 				signedRequestsEnabled := c.Bool(enableSignedRequestsFlagName)
 				defaultImageQuality := c.Int(defaultImageQualityFlagName)
 				matchers, err := GetMatchersFromConfig("sources.json")
 				processedCache := kvs.NewFileKVS(processedCacheDir)
+				requestNumber := 0
+				processMutex := sync.Mutex{}
+				for _, requestMatcher := range matchers {
+					matcherSource := requestMatcher.GetSource()
+					cachedSources[matcherSource] = cached.NewCachedDataSource(sourceCacheDir, requestMatcher.GetSource())
+				}
 				http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 					err, code := func() (err error, status int) {
+						requestHasBeenCanceled := false
+						go func() {
+							select {
+							case <-request.Context().Done():
+								requestHasBeenCanceled = true
+								fmt.Println("[BYE]")
+								return
+							}
+						}()
 						var sourceMatcher matcher.Matcher
 						for _, currentMatcher := range matchers {
 							if currentMatcher.HasMatched(request) {
@@ -114,6 +134,7 @@ func main() {
 						if sourceMatcher == nil {
 							return errors.New("No source matched for current request"), http.StatusBadRequest
 						}
+						dataSource := cachedSources[sourceMatcher.GetSource()]
 						rewrittenPath, err := sourceMatcher.RewritePath(request)
 						if err != nil {
 							return errors.Wrap(err, "path rewrite"), http.StatusBadRequest
@@ -127,19 +148,6 @@ func main() {
 						}
 						cX, cY, cW, cH, cropErr := getCropParamsFromRequest(request)
 						var resizedKey string
-						dataSource := sourceMatcher.GetSource()
-						cachedSourcesMapMutex.RLock()
-						if cachedDataSource, found := cachedSources[dataSource]; !found {
-							cachedDataSource = cached.NewCachedDataSource(sourceCacheDir, dataSource)
-							cachedSourcesMapMutex.RUnlock()
-							cachedSourcesMapMutex.Lock()
-							cachedSources[dataSource] = cachedDataSource
-							cachedSourcesMapMutex.Unlock()
-							dataSource = cachedDataSource
-						} else {
-							cachedSourcesMapMutex.RUnlock()
-							dataSource = cachedDataSource
-						}
 						sourceItemKey := dataSource.GetResourceId(rewrittenPath)
 						if cropErr == nil {
 							resizedKey = fmt.Sprintf("%s-%d-%d-%d-%d-%d-%d", sourceItemKey, iW, iH, cX, cY, cW, cH)
@@ -151,6 +159,9 @@ func main() {
 							imageQuality = defaultImageQuality
 						}
 						resizedKey += strconv.Itoa(imageQuality)
+						if requestHasBeenCanceled {
+							return nil, 200
+						}
 						data, err := processedCache.Get(resizedKey)
 						if err != nil {
 							return err, 500
@@ -159,36 +170,74 @@ func main() {
 							_ = writeImage(writer, data)
 							return nil, 200
 						}
+						processMutex.Lock()
+						defer func() {
+							processMutex.Unlock()
+						}()
+						if requestHasBeenCanceled {
+							return nil, 200
+						}
 						sourceData, err := dataSource.GetData(rewrittenPath)
 						if err != nil {
 							return errors.Wrap(err, "fetch data from source cache"), http.StatusBadRequest
 						}
-						img := bimg.NewImage(sourceData)
-						if cropErr == nil {
-							extractedImg, err := img.Extract(cY, cX, cW, cH)
-							if err != nil {
-								return errors.Wrap(err, "cant extract"), 500
-							}
-							img = bimg.NewImage(extractedImg)
+						if requestHasBeenCanceled {
+							fmt.Println("done before new img")
+							return nil, 200
 						}
-						resizedImg, _ := img.Resize(iW, iH)
-						imageData, err := bimg.NewImage(resizedImg).Process(bimg.Options{
-							Type:    bimg.JPEG,
-							Quality: imageQuality,
-							Background: bimg.Color{
-								R: 255,
-								G: 255,
-								B: 255,
-							},
-						})
+						if requestHasBeenCanceled {
+							fmt.Println("done before new img (after lock)")
+							return nil, 200
+						}
+						fmt.Println("preload")
+						img, _, err := image.Decode(bytes.NewReader(sourceData))
+						if err != nil {
+							return err, 500
+						}
+						if cropErr == nil {
+							img = transform.Crop(img, image.Rect(cX, cY, cW, cH))
+						}
+						if requestHasBeenCanceled {
+							fmt.Println("done before resize")
+							return nil, 200
+						}
+						imageBounds := img.Bounds()
+						imageRatio := float64(imageBounds.Dx()) / float64(imageBounds.Dy())
+						fmt.Println(imageRatio)
+						if iW == 0 {
+							iW = int(math.Floor(float64(iH) * imageRatio))
+						}
+						if iH == 0 {
+							iH = int(math.Floor(float64(iW) / imageRatio))
+						}
+						fmt.Println(iW, iH)
+						img = transform.Resize(img, iW, iH, transform.Lanczos)
+						if requestHasBeenCanceled {
+							fmt.Println("done before process")
+							return nil, 200
+						}
+						if requestHasBeenCanceled {
+							return nil, 200
+						}
 						if err != nil {
 							return errors.Wrap(err, "cannot process image"), 500
 						}
-						_ = writeImage(writer, imageData)
+						outputData := &bytes.Buffer{}
+						outputWriter := bufio.NewWriter(outputData)
+						err = jpeg.Encode(outputWriter, img, &jpeg.Options{Quality: imageQuality})
+						outputBytes := outputData.Bytes()
+						_ = writeImage(writer, outputBytes)
+						if err != nil {
+							return err, 500
+						}
+						requestNumber += 1
+						fmt.Printf("finished request #%d\n", requestNumber)
+
 						if request.URL.Query().Get("temporary") == "1" {
 							return nil, 200
 						}
-						return processedCache.Set(resizedKey, imageData), 500
+						err = processedCache.Set(resizedKey, outputBytes)
+						return
 					}()
 					if err != nil {
 						http.Error(writer, err.Error(), code)
@@ -196,6 +245,9 @@ func main() {
 				})
 				port := c.String("port")
 				fmt.Printf("Image server will listen on port '%s'", port)
+				go func() {
+					log.Println(http.ListenAndServe(":6060", nil))
+				}()
 				e := http.ListenAndServe(":"+port, nil)
 				if e != nil {
 					panic(e)
@@ -225,7 +277,7 @@ func main() {
 			},
 		},
 	}
-	app.Run(os.Args)
+	_ = app.Run(os.Args)
 
 }
 func writeImage(writer http.ResponseWriter, imageData []byte) error {
@@ -247,31 +299,25 @@ func calcMD5(input string) (checksum string, err error) {
 	return
 }
 
-type ImageOperation func(image *bimg.Image) (*bimg.Image, error)
-
-//func GetOperationsFromRequest(r *http.Request) []ImageOperation {
-//	q := r.URL.Query()
+//func NewCropOperation(cX, cY, cW, cH int) ImageOperation {
+//	return func(image *bimg.Image) (*bimg.Image, error) {
+//		_, err := image.Extract(cY, cX, cW, cH)
+//		if err != nil {
+//			return nil, errors.Wrap(err, "crop op")
+//		}
+//		return image, nil
+//	}
 //}
-
-func NewCropOperation(cX, cY, cW, cH int) ImageOperation {
-	return func(image *bimg.Image) (*bimg.Image, error) {
-		_, err := image.Extract(cY, cX, cW, cH)
-		if err != nil {
-			return nil, errors.Wrap(err, "crop op")
-		}
-		return image, nil
-	}
-}
-
-func NewResizeOperation(iW, iH int) ImageOperation {
-	return func(image *bimg.Image) (*bimg.Image, error) {
-		_, err := image.Resize(iW, iH)
-		if err != nil {
-			return nil, errors.Wrap(err, "resize op")
-		}
-		return image, nil
-	}
-}
+//
+//func NewResizeOperation(iW, iH int) ImageOperation {
+//	return func(image *bimg.Image) (*bimg.Image, error) {
+//		_, err := image.Resize(iW, iH)
+//		if err != nil {
+//			return nil, errors.Wrap(err, "resize op")
+//		}
+//		return image, nil
+//	}
+//}
 
 func getImageSizeParamsFromRequest(r *http.Request) (w int, h int, err error) {
 	q := r.URL.Query()
