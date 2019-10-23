@@ -210,7 +210,7 @@ func main() {
 							iH = int(math.Floor(float64(iW) / imageRatio))
 						}
 						fmt.Println(iW, iH)
-						if iW != 0 && iH != 0 {
+						if noZeroes(iW, iH) {
 							img = transform.Resize(img, iW, iH, transform.Lanczos)
 						}
 						if requestHasBeenCanceled {
