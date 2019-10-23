@@ -165,7 +165,7 @@ func main() {
 						if err != nil {
 							return err, 500
 						}
-						if data != nil {
+						if data != nil && false {
 							_ = writeImage(writer, data)
 							return nil, 200
 						}
@@ -181,41 +181,28 @@ func main() {
 							return errors.Wrap(err, "fetch data from source cache"), http.StatusBadRequest
 						}
 						if requestHasBeenCanceled {
-							fmt.Println("done before new img")
 							return nil, 200
 						}
-						if requestHasBeenCanceled {
-							fmt.Println("done before new img (after lock)")
-							return nil, 200
-						}
-						fmt.Println("preload")
 						img, _, err := image.Decode(bytes.NewReader(sourceData))
 						if err != nil {
 							return err, 500
 						}
 						if cropErr == nil && noZeroes(cW, cH) {
-							img = transform.Crop(img, image.Rect(cX, cY, cW, cH))
+							img = transform.Crop(img, image.Rect(cX, cY, cX+cW, cY+cH))
 						}
 						if requestHasBeenCanceled {
-							fmt.Println("done before resize")
 							return nil, 200
 						}
 						imageBounds := img.Bounds()
 						imageRatio := float64(imageBounds.Dx()) / float64(imageBounds.Dy())
-						fmt.Println(imageRatio)
 						if iW == 0 {
 							iW = int(math.Floor(float64(iH) * imageRatio))
 						}
 						if iH == 0 {
 							iH = int(math.Floor(float64(iW) / imageRatio))
 						}
-						fmt.Println(iW, iH)
 						if noZeroes(iW, iH) {
 							img = transform.Resize(img, iW, iH, transform.Lanczos)
-						}
-						if requestHasBeenCanceled {
-							fmt.Println("done before process")
-							return nil, 200
 						}
 						if requestHasBeenCanceled {
 							return nil, 200
@@ -230,7 +217,6 @@ func main() {
 						}
 						requestNumber += 1
 						fmt.Printf("finished request #%d\n", requestNumber)
-
 						if request.URL.Query().Get("temporary") == "1" {
 							return nil, 200
 						}
