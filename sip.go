@@ -193,7 +193,7 @@ func main() {
 						if err != nil {
 							return err, 500
 						}
-						if cropErr == nil {
+						if cropErr == nil && noZeroes(cW, cH) {
 							img = transform.Crop(img, image.Rect(cX, cY, cW, cH))
 						}
 						if requestHasBeenCanceled {
@@ -210,7 +210,9 @@ func main() {
 							iH = int(math.Floor(float64(iW) / imageRatio))
 						}
 						fmt.Println(iW, iH)
-						img = transform.Resize(img, iW, iH, transform.Lanczos)
+						if iW != 0 && iH != 0 {
+							img = transform.Resize(img, iW, iH, transform.Lanczos)
+						}
 						if requestHasBeenCanceled {
 							fmt.Println("done before process")
 							return nil, 200
@@ -276,6 +278,16 @@ func main() {
 	_ = app.Run(os.Args)
 
 }
+
+func noZeroes(values ...int) bool {
+	for _, value := range values {
+		if value == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func writeImage(writer http.ResponseWriter, imageData []byte) error {
 	header := writer.Header()
 	header["Content-Length"] = []string{strconv.Itoa(len(imageData))}
