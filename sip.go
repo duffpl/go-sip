@@ -158,6 +158,7 @@ func main() {
 							imageQuality = defaultImageQuality
 						}
 						resizedKey += strconv.Itoa(imageQuality)
+
 						if requestHasBeenCanceled {
 							return nil, 200
 						}
@@ -201,8 +202,8 @@ func main() {
 						if iH == 0 {
 							iH = int(math.Floor(float64(iW) / imageRatio))
 						}
-						if noZeroes(iW, iH) {
-							img = transform.Resize(img, iW, iH, transform.Lanczos)
+						if noZeroes(iW, iH) && iW < imageBounds.Dx() && iH < imageBounds.Dy() {
+							img = transform.Resize(img, iW, iH, transform.Linear)
 						}
 						if requestHasBeenCanceled {
 							return nil, 200
