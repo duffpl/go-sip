@@ -166,7 +166,7 @@ func main() {
 						if err != nil {
 							return err, 500
 						}
-						if data != nil && false {
+						if data != nil {
 							_ = writeImage(writer, data)
 							return nil, 200
 						}
