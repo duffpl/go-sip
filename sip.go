@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"github.com/anthonynsimon/bild/transform"
 	"image"
+	"image/color"
+	"image/draw"
 	"image/jpeg"
 	"log"
 	"math"
 	_ "net/http/pprof"
+	"strings"
 )
 import (
 	"crypto/hmac"
@@ -114,6 +117,7 @@ func main() {
 				}
 				http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 					err, code := func() (err error, status int) {
+						var cacheKeyTokens []interface{}
 						requestHasBeenCanceled := false
 						go func() {
 							select {
@@ -145,23 +149,25 @@ func main() {
 						if err != nil {
 							return errors.Wrap(err, "invalid image params"), http.StatusPreconditionFailed
 						}
+						cacheKeyTokens = append(cacheKeyTokens, iW, iH)
 						cX, cY, cW, cH, cropErr := getCropParamsFromRequest(request)
-						var resizedKey string
 						sourceItemKey := dataSource.GetResourceId(rewrittenPath)
+						cacheKeyTokens = append(cacheKeyTokens, sourceItemKey)
 						if cropErr == nil {
-							resizedKey = fmt.Sprintf("%s-%d-%d-%d-%d-%d-%d", sourceItemKey, iW, iH, cX, cY, cW, cH)
-						} else {
-							resizedKey = fmt.Sprintf("%s-%d-%d", sourceItemKey, iW, iH)
+							cacheKeyTokens = append(cacheKeyTokens, cX, cY, cW, cH)
 						}
 						imageQuality, _ := strconv.Atoi(request.URL.Query().Get("q"))
 						if imageQuality == 0 {
 							imageQuality = defaultImageQuality
 						}
-						resizedKey += strconv.Itoa(imageQuality)
-
+						cacheKeyTokens = append(cacheKeyTokens, imageQuality)
 						if requestHasBeenCanceled {
 							return nil, 200
 						}
+						pLeft, pRight, pTop, pBottom := getPaddingParamsFromRequest(request)
+						cacheKeyTokens = append(cacheKeyTokens, pLeft, pRight, pTop, pBottom)
+						resizedKey := joinItems(cacheKeyTokens)
+						fmt.Println(resizedKey)
 						data, err := processedCache.Get(resizedKey)
 						if err != nil {
 							return err, 500
@@ -185,6 +191,9 @@ func main() {
 							return nil, 200
 						}
 						img, _, err := image.Decode(bytes.NewReader(sourceData))
+						if !allZeroes(pTop, pBottom, pLeft, pRight) {
+							img = getPaddedImage(img, pLeft, pRight, pTop, pBottom)
+						}
 						if err != nil {
 							return err, 500
 						}
@@ -266,6 +275,25 @@ func main() {
 
 }
 
+func getPaddedImage(input image.Image, pL int, pR int, pT int, pB int) image.Image {
+	w := input.Bounds().Dx()
+	h := input.Bounds().Dy()
+	targetRectangle := image.Rect(0,0, w+pL+pR, h+pT+pB)
+	white := color.RGBA{255,255,255,255}
+	resultImage := image.NewRGBA(targetRectangle)
+	draw.Draw(resultImage, resultImage.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+	draw.Draw(resultImage, image.Rect(pR,pT,pR+w,pT+h), input, image.Point{}, draw.Src)
+	return resultImage
+}
+
+func joinItems(items []interface{}) string {
+	var result []string
+	for _, item := range items {
+		result = append(result, fmt.Sprint(item))
+	}
+	return strings.Join(result, "-")
+}
+
 func noZeroes(values ...int) bool {
 	for _, value := range values {
 		if value == 0 {
@@ -274,6 +302,16 @@ func noZeroes(values ...int) bool {
 	}
 	return true
 }
+
+func allZeroes(values ...int) bool {
+	for _, value := range values {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 
 func writeImage(writer http.ResponseWriter, imageData []byte) error {
 	header := writer.Header()
@@ -337,6 +375,15 @@ func getCropParamsFromRequest(r *http.Request) (cx int, cy int, cw int, ch int, 
 	cy, err = strconv.Atoi(queryParams.Get("cy"))
 	ch, err = strconv.Atoi(queryParams.Get("ch"))
 	cw, err = strconv.Atoi(queryParams.Get("cw"))
+	return
+}
+
+func getPaddingParamsFromRequest(r *http.Request) (pRight int, pLeft int, pTop int, pBottom int) {
+	queryParams := r.URL.Query()
+	pRight, _ = strconv.Atoi(queryParams.Get("pr"))
+	pLeft, _ = strconv.Atoi(queryParams.Get("pl"))
+	pTop, _ = strconv.Atoi(queryParams.Get("pt"))
+	pBottom, _ = strconv.Atoi(queryParams.Get("pb"))
 	return
 }
 
