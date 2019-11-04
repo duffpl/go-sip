@@ -33,7 +33,6 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"sync"
 )
 
 const cacheDirFlagName = "cachedir"
@@ -110,7 +109,7 @@ func main() {
 				matchers, err := GetMatchersFromConfig("sources.json")
 				processedCache := kvs.NewFileKVS(processedCacheDir)
 				requestNumber := 0
-				processMutex := sync.Mutex{}
+				//processMutex := sync.Mutex{}
 				for _, requestMatcher := range matchers {
 					matcherSource := requestMatcher.GetSource()
 					cachedSources[matcherSource] = cached.NewCachedDataSource(sourceCacheDir, requestMatcher.GetSource())
@@ -167,7 +166,6 @@ func main() {
 						pLeft, pRight, pTop, pBottom := getPaddingParamsFromRequest(request)
 						cacheKeyTokens = append(cacheKeyTokens, pLeft, pRight, pTop, pBottom)
 						resizedKey := joinItems(cacheKeyTokens)
-						fmt.Println(resizedKey)
 						data, err := processedCache.Get(resizedKey)
 						if err != nil {
 							return err, 500
@@ -176,10 +174,6 @@ func main() {
 							_ = writeImage(writer, data)
 							return nil, 200
 						}
-						processMutex.Lock()
-						defer func() {
-							processMutex.Unlock()
-						}()
 						if requestHasBeenCanceled {
 							return nil, 200
 						}
@@ -278,11 +272,11 @@ func main() {
 func getPaddedImage(input image.Image, pL int, pR int, pT int, pB int) image.Image {
 	w := input.Bounds().Dx()
 	h := input.Bounds().Dy()
-	targetRectangle := image.Rect(0,0, w+pL+pR, h+pT+pB)
-	white := color.RGBA{255,255,255,255}
+	targetRectangle := image.Rect(0, 0, w+pL+pR, h+pT+pB)
+	white := color.RGBA{255, 255, 255, 255}
 	resultImage := image.NewRGBA(targetRectangle)
 	draw.Draw(resultImage, resultImage.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
-	draw.Draw(resultImage, image.Rect(pR,pT,pR+w,pT+h), input, image.Point{}, draw.Src)
+	draw.Draw(resultImage, image.Rect(pR, pT, pR+w, pT+h), input, image.Point{}, draw.Src)
 	return resultImage
 }
 
@@ -311,7 +305,6 @@ func allZeroes(values ...int) bool {
 	}
 	return true
 }
-
 
 func writeImage(writer http.ResponseWriter, imageData []byte) error {
 	header := writer.Header()
