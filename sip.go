@@ -1,16 +1,18 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"github.com/anthonynsimon/bild/transform"
+	"github.com/chai2010/webp"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/jpeg"
+	"io"
 	"log"
 	"math"
 	_ "net/http/pprof"
+	"regexp"
 	"strings"
 )
 import (
@@ -165,13 +167,28 @@ func main() {
 						}
 						pLeft, pRight, pTop, pBottom := getPaddingParamsFromRequest(request)
 						cacheKeyTokens = append(cacheKeyTokens, pLeft, pRight, pTop, pBottom)
+						var webPAccepted bool
+						if isWebPAccepted(request) {
+							webPAccepted = true
+							fmt.Println("webp!")
+							cacheKeyTokens = append(cacheKeyTokens, "webp")
+						} else {
+							webPAccepted = false
+							cacheKeyTokens = append(cacheKeyTokens, "jpeg")
+						}
+						filter := getResampleFilter(request)
+						cacheKeyTokens = append(cacheKeyTokens, filter)
 						resizedKey := joinItems(cacheKeyTokens)
 						data, err := processedCache.Get(resizedKey)
 						if err != nil {
 							return err, 500
 						}
 						if data != nil {
-							_ = writeImage(writer, data)
+							if webPAccepted {
+								_ = writeWebP(writer, data)
+							} else {
+								_ = writeJpeg(writer, data)
+							}
 							return nil, 200
 						}
 						if requestHasBeenCanceled {
@@ -206,18 +223,25 @@ func main() {
 							iH = int(math.Floor(float64(iW) / imageRatio))
 						}
 						if noZeroes(iW, iH) && iW < imageBounds.Dx() && iH < imageBounds.Dy() {
-							img = transform.Resize(img, iW, iH, transform.Linear)
+							img = transform.Resize(img, iW, iH, filter)
 						}
 						if requestHasBeenCanceled {
 							return nil, 200
 						}
-						outputData := &bytes.Buffer{}
-						outputWriter := bufio.NewWriter(outputData)
-						err = jpeg.Encode(outputWriter, img, &jpeg.Options{Quality: imageQuality})
-						outputBytes := outputData.Bytes()
-						_ = writeImage(writer, outputBytes)
+						var imageOutput bytes.Buffer
+						if webPAccepted {
+							err = encodeWebP(&imageOutput, img, imageQuality)
+						} else {
+							err = encodeJpeg(&imageOutput, img, imageQuality)
+						}
 						if err != nil {
 							return err, 500
+						}
+						outputBytes := imageOutput.Bytes()
+						if webPAccepted {
+							_ = writeWebP(writer, outputBytes)
+						} else {
+							_ = writeJpeg(writer, outputBytes)
 						}
 						requestNumber += 1
 						fmt.Printf("finished request #%d\n", requestNumber)
@@ -260,13 +284,34 @@ func main() {
 				},
 				cli.IntFlag{
 					Name:  defaultImageQualityFlagName,
-					Value: 60,
+					Value: 85,
 				},
 			},
 		},
 	}
 	_ = app.Run(os.Args)
 
+}
+
+func encodeJpeg(writer io.Writer, img image.Image, quality int) error {
+	return jpeg.Encode(writer, img, &jpeg.Options{Quality: quality})
+}
+
+func encodeWebP(writer io.Writer, img image.Image, quality int) error {
+	options := webp.Options{}
+	if quality == 100 {
+		options.Lossless = true
+	} else {
+		options.Quality = float32(quality)
+	}
+	return webp.Encode(writer, img, &options)
+}
+
+var webPRegexp = regexp.MustCompile("image/webp")
+
+func isWebPAccepted(request *http.Request) bool {
+	accept := request.Header.Get("accept")
+	return webPRegexp.MatchString(accept)
 }
 
 func getPaddedImage(input image.Image, pL int, pR int, pT int, pB int) image.Image {
@@ -306,11 +351,19 @@ func allZeroes(values ...int) bool {
 	return true
 }
 
-func writeImage(writer http.ResponseWriter, imageData []byte) error {
+func writeJpeg(writer http.ResponseWriter, imageData []byte) error {
+	return writeImage(writer, imageData, "image/jpeg")
+}
+
+func writeWebP(writer http.ResponseWriter, imageData []byte) error {
+	return writeImage(writer, imageData, "image/webp")
+}
+
+func writeImage(writer http.ResponseWriter, imageData []byte, contentType string) error {
 	header := writer.Header()
 	header["Content-Length"] = []string{strconv.Itoa(len(imageData))}
 	header.Add("Cache-Control", "max-age=31536000, public")
-	header.Add("Content-Type", "image/jpeg")
+	header.Add("Content-Type", contentType)
 	header.Add("Access-Control-Allow-Origin", "*")
 	_, err := writer.Write(imageData)
 	return err
@@ -344,6 +397,22 @@ func writeImage(writer http.ResponseWriter, imageData []byte) error {
 //		return image, nil
 //	}
 //}
+
+func getResampleFilter(request *http.Request) transform.ResampleFilter {
+	name := request.URL.Query().Get("t")
+	switch name {
+	case "lanczos":
+		return transform.Lanczos
+	case "linear":
+		return transform.Linear
+	case "box":
+		return transform.Box
+	case "gaussian":
+		return transform.Gaussian
+	default:
+		return transform.Linear
+	}
+}
 
 func getImageSizeParamsFromRequest(r *http.Request) (w int, h int, err error) {
 	q := r.URL.Query()
@@ -402,7 +471,6 @@ func verifySignature(r *http.Request, sigKey []byte) bool {
 	shaMac := hmac.New(sha256.New, sigKey)
 	msgJson, _ := json.Marshal(msg)
 	shaMac.Write(msgJson)
-	fmt.Println(string(msgJson))
 	resultSig := fmt.Sprintf("%x", shaMac.Sum(nil))
 	return resultSig == r.URL.Query().Get("sig")
 }
