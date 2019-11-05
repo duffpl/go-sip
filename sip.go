@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/anthonynsimon/bild/effect"
 	"github.com/anthonynsimon/bild/transform"
 	"github.com/chai2010/webp"
 	"image"
@@ -151,7 +152,7 @@ func main() {
 						if err != nil {
 							return errors.Wrap(err, "invalid image params"), http.StatusPreconditionFailed
 						}
-						cacheKeyTokens = append(cacheKeyTokens, iW, iH)
+						cacheKeyTokens = append(cacheKeyTokens, iW, iH, "upscale")
 						cX, cY, cW, cH, cropErr := getCropParamsFromRequest(request)
 						sourceItemKey := dataSource.GetResourceId(rewrittenPath)
 						cacheKeyTokens = append(cacheKeyTokens, sourceItemKey)
@@ -223,8 +224,11 @@ func main() {
 						if iH == 0 {
 							iH = int(math.Floor(float64(iW) / imageRatio))
 						}
-						if noZeroes(iW, iH) && iW < imageBounds.Dx() && iH < imageBounds.Dy() {
+						if noZeroes(iW, iH) {
 							img = transform.Resize(img, iW, iH, filter)
+							if iW > imageBounds.Dx() || iH > imageBounds.Dy() {
+								img = effect.UnsharpMask(img, 0.6, 0.1)
+							}
 						}
 						if requestHasBeenCanceled {
 							return nil, 200
