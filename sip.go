@@ -28,6 +28,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
+	_ "golang.org/x/image/webp"
 	_ "image/jpeg"
 	_ "image/png"
 	"io/ioutil"
