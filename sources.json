@@ -12,7 +12,7 @@
   },
   {
     "hostMatch": "^localhost",
-    "pathMatch": "v2/products/.*?([0-9a-f]{32})\\.(jpe?g|png)$",
+    "pathMatch": "v2/products/.*?([0-9a-f]{32})\\.(jpe?g|png|webp)$",
     "rewritePattern": "products/$1.$2",
     "source": {
       "type": "s3",
