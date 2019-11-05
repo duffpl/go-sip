@@ -410,7 +410,7 @@ func getResampleFilter(request *http.Request) transform.ResampleFilter {
 	case "gaussian":
 		return transform.Gaussian
 	default:
-		return transform.Linear
+		return transform.Lanczos
 	}
 }
 
